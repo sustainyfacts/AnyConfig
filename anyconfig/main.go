@@ -27,35 +27,42 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Defines how the configuration should be read
-type Config struct {
-	// File to read configuration from.
-	//
-	// If a relative path or name is specified, it will look for a file in
-	// the user home directory first, and if not found, in the current directory
-	File string
-	// Specify a prefix to
-	EnvironmentVariablePrefix string
+// Options for reading the configuration
+type Option func(*config)
+
+// Read the configuration from a file. Usage examples:
+//
+//	WithFile("~/.config.yaml") // reference to home directory of current user
+//	WithFile("/home/user/.config.yaml") // fully qualified path
+//	WithFile(".config.yaml") // will first look for ~/.conf.yaml and then .conf.yaml in the current directory
+func WithFile(file string) Option {
+	return func(c *config) {
+		c.file = file
+	}
 }
 
-var DefaultConfig = Config{}
+// Defines how the configuration should be read
+type config struct {
+	file string
+}
 
 // Validator instance
 var validate = validator.New()
 
-// Read the configuration using the default configuration into a struct given as pointer
+// Read the configuration using the specified options into a struct given as pointer
 // S should be a struct with annotated fields
-func Read[S any](c *S) error {
-	return ReadWithConfig(c, DefaultConfig)
-}
-
-// Read the configuration using the default configuration
-func ReadWithConfig[S any](c *S, config Config) error {
+func Read[S any](c *S, options ...Option) error {
 	ctx := context.Background()
 
+	config := new(config)
+	// Apply all the functional options to configure the client.
+	for _, opt := range options {
+		opt(config)
+	}
+
 	// Read from file
-	if config.File != "" {
-		if err := readFromFile(config.File, c); err != nil {
+	if config.file != "" {
+		if err := unmarshalFromFile(config.file, c); err != nil {
 			return err
 		}
 	}
@@ -73,13 +80,16 @@ func ReadWithConfig[S any](c *S, config Config) error {
 	return nil // All good
 }
 
-func readFromFile[S any](file string, c *S) error {
-	bytes, err := os.ReadFile(file)
-	if err != nil {
+// Unmarshals the configuration from a file,
+// as json or yaml depending on the file extension
+func unmarshalFromFile[S any](file string, c *S) (err error) {
+	var bytes []byte
+	if bytes, err = readFile(file); err != nil {
 		return err
 	}
+
 	if strings.HasSuffix(file, ".json") {
-		if err := json.Unmarshal(bytes, c); err != nil {
+		if err = json.Unmarshal(bytes, c); err != nil {
 			return err
 		}
 	} else if strings.HasSuffix(file, ".yaml") || strings.HasSuffix(file, ".yml") {
@@ -88,4 +98,23 @@ func readFromFile[S any](file string, c *S) error {
 		}
 	}
 	return nil
+}
+
+// Reads a file using absolute path, or relative to home or current directory
+func readFile(file string) ([]byte, error) {
+	home, _ := os.UserHomeDir()
+	switch file[0] {
+	case '/':
+		return os.ReadFile(file)
+	case '~':
+		return os.ReadFile(home + "/" + file[1:])
+	}
+
+	// First try in the home directory
+	if bytes, err := os.ReadFile(home + "/" + file); err == nil {
+		return bytes, nil
+	} else {
+		// Fallback to current directory
+		return os.ReadFile(file)
+	}
 }
