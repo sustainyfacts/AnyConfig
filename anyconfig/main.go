@@ -1,4 +1,4 @@
-package config
+package anyconfig
 
 import (
 	"context"
